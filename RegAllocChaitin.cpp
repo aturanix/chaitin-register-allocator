@@ -35,6 +35,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <functional>
 #include <queue>
 
 using namespace llvm;
@@ -118,6 +119,11 @@ public:
                           SmallVectorImpl<Register> &SplitVRegs);
 
   static char ID;
+
+private:
+  unsigned assignRemainingIntervals(
+      std::function<alihan::SolutionMap(const alihan::InterferenceGraph &)>
+          solver);
 };
 
 char RAChaitin::ID = 0;
@@ -279,6 +285,71 @@ MCRegister RAChaitin::selectOrSplit(const LiveInterval &VirtReg,
   return 0;
 }
 
+unsigned RAChaitin::assignRemainingIntervals(
+    std::function<alihan::SolutionMap(const alihan::InterferenceGraph &)>
+        Solver) {
+  std::vector<const LiveInterval *> Intervals;
+  for (unsigned I{0u}, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    if (MRI->reg_nodbg_empty(Reg) || VRM->hasPhys(Reg)) {
+      continue;
+    }
+    Intervals.push_back(&LIS->getInterval(Reg));
+  }
+
+  if (Intervals.empty()) {
+    return 0;
+  }
+
+  alihan::Registers RegsData;
+  for (const LiveInterval *VirtReg : Intervals) {
+    auto Order =
+        AllocationOrder::create(VirtReg->reg(), *VRM, RegClassInfo, Matrix);
+    LLVM_DEBUG(dbgs() << *VirtReg << '\n');
+
+    std::unordered_set<unsigned> CandidatePhys;
+    for (MCRegister PhysReg : Order) {
+      assert(PhysReg.isValid());
+      if (Matrix->checkInterference(*VirtReg, PhysReg) ==
+          LiveRegMatrix::IK_Free) {
+        CandidatePhys.insert(PhysReg);
+      }
+
+      auto SubregsRange = TRI->subregs(PhysReg);
+      std::vector<unsigned> Subregs(SubregsRange.begin(), SubregsRange.end());
+      RegsData.addPhys(PhysReg, Subregs);
+    }
+    RegsData.addVirt(VirtReg->reg(), std::move(CandidatePhys),
+                     VirtReg->weight(), VirtReg->isSpillable());
+  }
+
+  for (unsigned I{0u}; I != Intervals.size(); ++I) {
+    for (unsigned J{I + 1}; J != Intervals.size(); ++J) {
+      bool Interference{!Intervals[I]->empty() &&
+                        Intervals[I]->overlaps(*Intervals[J])};
+      if (Interference) {
+        RegsData.addVirtInterference(Intervals[I]->reg(), Intervals[J]->reg());
+      }
+    }
+  }
+
+  alihan::InterferenceGraph Graph = RegsData.createInterferenceGraph();
+  alihan::SolutionMap Solution = Solver(Graph);
+  alihan::SolutionMapLLVM SolutionLLVM =
+      alihan::convertSolutionMapToSolutionMapLLVM(RegsData, Solution);
+
+  unsigned AssignedIntervalsCount{0u};
+  for (auto I = SolutionLLVM.beginAssignments(),
+            E = SolutionLLVM.endAssignments();
+       I != E; ++I) {
+    ++AssignedIntervalsCount;
+    Matrix->assign(LIS->getInterval(I->first), I->second);
+  }
+
+  Matrix->invalidateVirtRegs();
+  return AssignedIntervalsCount;
+}
+
 bool RAChaitin::runOnMachineFunction(MachineFunction &mf) {
   LLVM_DEBUG(dbgs() << "********** CHAITIN REGISTER ALLOCATION **********\n"
                     << "********** Function: " << mf.getName() << '\n');
@@ -292,76 +363,8 @@ bool RAChaitin::runOnMachineFunction(MachineFunction &mf) {
 
   SpillerInstance.reset(createInlineSpiller(*this, *MF, *VRM, VRAI));
 
-  for (std::vector<const LiveInterval *> Intervals;;) {
-    Intervals.clear();
-    for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
-      Register Reg = Register::index2VirtReg(I);
-      if (MRI->reg_nodbg_empty(Reg) || VRM->hasPhys(Reg)) {
-        continue;
-      }
-      Intervals.push_back(&LIS->getInterval(Reg));
-    }
-
-    if (Intervals.empty()) {
-      break;
-    }
-
-    alihan::Registers RegsData;
-    for (const LiveInterval *VirtReg : Intervals) {
-      auto Order =
-          AllocationOrder::create(VirtReg->reg(), *VRM, RegClassInfo, Matrix);
-      LLVM_DEBUG(dbgs() << *VirtReg << '\n');
-
-      std::unordered_set<unsigned> CandidatePhys;
-      for (MCRegister PhysReg : Order) {
-        assert(PhysReg.isValid());
-        if (Matrix->checkInterference(*VirtReg, PhysReg) ==
-            LiveRegMatrix::IK_Free) {
-          CandidatePhys.insert(PhysReg);
-        }
-
-        std::vector<unsigned> Subregs;
-        for (MCRegister SubReg : TRI->subregs(PhysReg)) {
-          Subregs.push_back(SubReg);
-        }
-        RegsData.addPhys(PhysReg, Subregs);
-      }
-      RegsData.addVirt(VirtReg->reg(), std::move(CandidatePhys),
-                       VirtReg->weight(), VirtReg->isSpillable());
-    }
-
-    for (unsigned I{0u}; I != Intervals.size(); ++I) {
-      for (unsigned J{I + 1}; J != Intervals.size(); ++J) {
-        bool Interference{!Intervals[I]->empty() &&
-                          Intervals[I]->overlaps(*Intervals[J])};
-        if (Interference) {
-          RegsData.addVirtInterference(Intervals[I]->reg(),
-                                       Intervals[J]->reg());
-        }
-      }
-    }
-
-    alihan::InterferenceGraph Graph = RegsData.createInterferenceGraph();
-    alihan::SolutionMap Solution = alihan::solveChaitin(Graph);
-    alihan::SolutionMapLLVM SolutionLLVM =
-        alihan::convertSolutionMapToSolutionMapLLVM(RegsData, Solution);
-
-    for (auto I = SolutionLLVM.beginAssignments(),
-              E = SolutionLLVM.endAssignments();
-         I != E; ++I) {
-      Matrix->assign(LIS->getInterval(I->first), I->second);
-    }
-
-    for (auto I = SolutionLLVM.beginSpills(), E = SolutionLLVM.endSpills();
-         I != E; ++I) {
-      SmallVector<Register, 4> VirtRegs;
-      LiveRangeEdit LRE(&LIS->getInterval(*I), VirtRegs, *MF, *LIS, VRM, this,
-                        &DeadRemats);
-      spiller().spill(LRE);
-    }
-
-    Matrix->invalidateVirtRegs();
-  }
+  unsigned N = assignRemainingIntervals(alihan::solveChaitin);
+  LLVM_DEBUG(dbgs() << "Assigned " << N << " intervals\n");
 
   allocatePhysRegs();
   postOptimization();
