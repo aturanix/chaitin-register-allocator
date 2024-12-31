@@ -4,6 +4,8 @@
 #include "RegAllocChaitinRegisters.h"
 
 namespace alihan {
-SolutionMap solveGreedy(InterferenceGraph const &graph);
-SolutionMap solveChaitin(InterferenceGraph const &graph);
+[[nodiscard]] auto solveGreedy(const InterferenceGraph &graph,
+                               std::size_t numberOfColors) -> SolutionMap;
+[[nodiscard]] auto solveChaitin(const InterferenceGraph &graph,
+                                std::size_t numberOfColors) -> SolutionMap;
 } // namespace alihan

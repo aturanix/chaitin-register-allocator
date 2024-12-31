@@ -8,6 +8,7 @@ separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_library(chaitin MODULE
     RegAllocChaitin.cpp
     RegAllocBase.h
+    Range.h
     AllocationOrder.h AllocationOrder.cpp
     RegAllocChaitinRegisters.h RegAllocChaitinRegisters.cpp
     RegAllocChaitinGraph.h RegAllocChaitinGraph.cpp

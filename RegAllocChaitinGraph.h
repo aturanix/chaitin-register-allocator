@@ -1,128 +1,87 @@
 #pragma once
 
+#include "Range.h"
+
 #include <cassert>
+#include <cstddef>
 #include <optional>
 #include <ostream>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 namespace alihan {
 class InterferenceGraph {
 private:
-  using node_iterator =
-      std::unordered_map<unsigned, std::unordered_set<unsigned>>::iterator;
-  using const_node_iterator =
-      std::unordered_map<unsigned,
-                         std::unordered_set<unsigned>>::const_iterator;
-  using edge_iterator = std::unordered_set<unsigned>::iterator;
-  using const_edge_iterator = std::unordered_set<unsigned>::const_iterator;
+  class Node {
+  public:
+    using EdgeIterator = std::unordered_set<unsigned>::const_iterator;
+
+    Node() = delete;
+    Node(double weight, bool spillable);
+
+    [[nodiscard]] auto getWeight() const -> double;
+    [[nodiscard]] auto getSpillable() const -> bool;
+    [[nodiscard]] auto getEdgeCount() const -> std::size_t;
+
+    [[nodiscard]] auto hasEdge(unsigned node) const -> bool;
+    void addEdge(unsigned node);
+    void removeEdge(unsigned node);
+
+    [[nodiscard]] auto isLessThan(const Node &node) const -> bool;
+
+    [[nodiscard]] auto begin() const -> EdgeIterator;
+    [[nodiscard]] auto end() const -> EdgeIterator;
+
+  private:
+    double mWeight;
+    bool mSpillable;
+    std::unordered_set<unsigned> mEdges;
+  };
 
 public:
-  using EdgeIterator = const_edge_iterator;
+  using EdgeIterator = Node::EdgeIterator;
 
   class NodeIterator {
+  private:
+    using iterator = std::unordered_map<unsigned, Node>::const_iterator;
+
   public:
     using value_type = unsigned;
 
-    NodeIterator(const_node_iterator node);
-    NodeIterator &operator++();
-    unsigned operator*() const;
-    bool operator==(NodeIterator const &it) const;
-    bool operator!=(NodeIterator const &it) const;
+    NodeIterator(iterator node);
+    auto operator++() -> NodeIterator &;
+    [[nodiscard]] auto operator*() const -> unsigned;
+    [[nodiscard]] auto operator==(NodeIterator const &it) const -> bool;
+    [[nodiscard]] auto operator!=(NodeIterator const &it) const -> bool;
 
   private:
-    const_node_iterator mNode;
+    iterator mNode;
   };
 
-  class VirtNodeIterator {
-  public:
-    using value_type = unsigned;
+  [[nodiscard]] auto isEmpty() const -> bool;
+  [[nodiscard]] auto getSize() const -> std::size_t;
+  [[nodiscard]] auto getWeight(unsigned node) const -> std::optional<double>;
+  [[nodiscard]] auto getSpillable(unsigned node) const -> std::optional<bool>;
+  [[nodiscard]] auto getEdgeCount(unsigned node) const -> std::optional<std::size_t>;
 
-    VirtNodeIterator(InterferenceGraph const &graph, NodeIterator node,
-                     NodeIterator end_node);
-    VirtNodeIterator &operator++();
-    unsigned operator*();
-    bool operator==(VirtNodeIterator const &it);
-    bool operator!=(VirtNodeIterator const &it);
-
-  private:
-    NodeIterator mNode;
-    NodeIterator mEndNode;
-    InterferenceGraph const *mGraph;
-  };
-
-  class VirtEdgeIterator {
-  public:
-    using value_type = unsigned;
-
-    VirtEdgeIterator(InterferenceGraph const &graph, EdgeIterator edge,
-                     EdgeIterator endEdge);
-    VirtEdgeIterator &operator++();
-    unsigned operator*();
-    bool operator==(VirtEdgeIterator const &it);
-    bool operator!=(VirtEdgeIterator const &it);
-
-  private:
-    EdgeIterator mEdge;
-    EdgeIterator mEndEdge;
-    InterferenceGraph const *mGraph;
-  };
-
-  static bool compareVirtLess(double weight1, bool spillable1, double weight2,
-                              bool spillable2);
-
-  InterferenceGraph() = delete;
-  InterferenceGraph(unsigned fullPhysCount, unsigned fullVirtCount);
-
-  unsigned getSize() const;
-  unsigned getFullPhysCount() const;
-  unsigned getFullVirtCount() const;
-  unsigned getPhysCount() const;
-  unsigned getVirtCount() const;
-
-  unsigned getPhysBeginIdx() const;
-  unsigned getPhysEndIdx() const;
-  unsigned getVirtBeginIdx() const;
-  unsigned getVirtEndIdx() const;
-
-  unsigned isPhys(unsigned n) const;
-  unsigned isVirt(unsigned n) const;
-
-  void setWeight(unsigned node, double weight);
-  void setSpillable(unsigned node, bool spillable);
-
-  double getWeight(unsigned node) const;
-  bool getSpillable(unsigned node) const;
-
-  bool compareVirtLess(unsigned node1, unsigned node2) const;
-
-  bool hasNode(unsigned node) const;
-  bool hasEdge(unsigned node1, unsigned node2) const;
-  void addNode(unsigned id);
-  bool addEdge(unsigned node1, unsigned node2);
+  [[nodiscard]] auto hasNode(unsigned node) const -> bool;
+  [[nodiscard]] auto hasEdge(unsigned node1, unsigned node2) const -> bool;
+  void addNode(unsigned id, double weight, bool spillable);
+  auto addEdge(unsigned node1, unsigned node2) -> bool;
   void removeNode(unsigned node);
-  bool removeEdge(unsigned node1, unsigned node2);
+  auto removeEdge(unsigned node1, unsigned node2) -> bool;
 
-  std::optional<unsigned> getEdgeCount(unsigned node) const;
-  NodeIterator beginNode() const;
-  NodeIterator endNode() const;
-  VirtNodeIterator beginVirtNode() const;
-  VirtNodeIterator endVirtNode() const;
-  EdgeIterator beginEdge(unsigned node) const;
-  EdgeIterator endEdge(unsigned node) const;
-  VirtEdgeIterator beginVirtEdge(unsigned node) const;
-  VirtEdgeIterator endVirtEdge(unsigned node) const;
+  [[nodiscard]] auto isNodeLessThan(unsigned node1, unsigned node2) const -> std::optional<bool>;
 
-  std::ostream &print(std::ostream &os) const;
+  [[nodiscard]] auto getNodeRange() const -> Range<NodeIterator>;
+  [[nodiscard]] auto getEdgeRange(unsigned node) const -> std::optional<Range<EdgeIterator>>;
+
+  auto print(std::ostream &os) const -> std::ostream &;
 
 private:
-  unsigned mPhysCount{0};
-  unsigned mVirtCount{0};
-  unsigned mFullPhysCount;
-  unsigned mFullVirtCount;
-  std::vector<double> mWeight;
-  std::vector<char> mSpillable;
-  std::unordered_map<unsigned, std::unordered_set<unsigned>> mGraph;
+  [[nodiscard]] auto getNode(unsigned node) const -> const Node *;
+  [[nodiscard]] auto getNode(unsigned node) -> Node *;
+
+  std::unordered_map<unsigned, Node> mGraph;
 };
 } // namespace alihan

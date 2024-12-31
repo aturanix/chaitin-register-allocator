@@ -10,30 +10,9 @@
 
 namespace alihan {
 using SolutionMap = std::unordered_map<unsigned, unsigned>;
+using SolutionMapLLVM = std::unordered_map<unsigned, unsigned>;
 
-struct SolutionMapLLVM {
-public:
-  using assign_iterator_const =
-      std::unordered_map<unsigned, unsigned>::const_iterator;
-  using spill_iterator_const = std::vector<unsigned>::const_iterator;
-
-  SolutionMapLLVM() = default;
-
-  void assign(unsigned virt, unsigned phys);
-  void spill(unsigned virt);
-  assign_iterator_const beginAssignments() const;
-  assign_iterator_const endAssignments() const;
-  spill_iterator_const beginSpills() const;
-  spill_iterator_const endSpills() const;
-
-  std::ostream &print(std::ostream &os) const;
-
-private:
-  std::unordered_map<unsigned, unsigned> mAssingments;
-  std::vector<unsigned> mSpills;
-};
-
-class __attribute__((visibility("hidden"))) Registers {
+class Registers {
 public:
   struct VirtualRegister {
     double weight;
@@ -44,25 +23,24 @@ public:
 
   void addVirt(unsigned id, std::unordered_set<unsigned> candidatePhysIds,
                double weight, bool spillable);
-  unsigned virtCount() const;
-  const VirtualRegister *getVirtReg(unsigned virtId) const;
-  std::optional<unsigned> getVirtOrdinalId(unsigned virtId) const;
-  std::optional<unsigned> getVirtId(unsigned virtOrdinalId) const;
-  unsigned getGroupBeginId() const;
-  unsigned getGroupEndId() const;
-  unsigned getVirtOrdinalBeginId() const;
-  unsigned getVirtOrdinalEndId() const;
-  bool addVirtInterference(unsigned virtId1, unsigned virtId2);
-  unsigned addPhys(unsigned id, std::vector<unsigned> const &subregIds);
-  unsigned getGroupCount() const;
-  std::optional<unsigned> getPhysGroupId(unsigned physId) const;
-  std::optional<unsigned> getVirtCandPhysInGroup(unsigned virtId,
-                                                 unsigned groupId) const;
-  InterferenceGraph createInterferenceGraph() const;
+  [[nodiscard]] auto getVirtCount() const -> unsigned;
+  [[nodiscard]] auto getVirtReg(unsigned virtId) const -> const VirtualRegister *;
+  [[nodiscard]] auto getVirtOrdinalId(unsigned virtId) const -> std::optional<unsigned>;
+  [[nodiscard]] auto getVirtId(unsigned virtOrdinalId) const -> std::optional<unsigned>;
+  [[nodiscard]] auto getGroupIdFirst() const -> unsigned;
+  [[nodiscard]] auto getGroupIdLast() const -> unsigned;
+  [[nodiscard]] auto getVirtOrdinalIdFirst() const -> unsigned;
+  [[nodiscard]] auto getVirtOrdinalIdLast() const -> unsigned;
+  auto addVirtInterference(unsigned virtId1, unsigned virtId2) -> bool;
+  auto addPhys(unsigned id, std::vector<unsigned> const &subregIds) -> unsigned;
+  [[nodiscard]] auto getGroupCount() const -> unsigned;
+  [[nodiscard]] auto getPhysGroupId(unsigned physId) const -> std::optional<unsigned>;
+  [[nodiscard]] auto getVirtCandPhysInGroup(unsigned virtId, unsigned groupId) const -> std::optional<unsigned>;
+  [[nodiscard]] auto createInterferenceGraph() const -> InterferenceGraph;
   std::ostream &print(std::ostream &os) const;
 
 private:
-  VirtualRegister *getVirtReg(unsigned virtId);
+  [[nodiscard]] auto getVirtReg(unsigned virtId) -> VirtualRegister *;
   std::ostream &printVirtOrdinal(std::ostream &os) const;
   std::ostream &printVirt(std::ostream &os) const;
   std::ostream &printPhys(std::ostream &os) const;
@@ -74,7 +52,7 @@ private:
   std::vector<std::unordered_set<unsigned>> mGroups;
 };
 
-SolutionMapLLVM
-convertSolutionMapToSolutionMapLLVM(Registers const &registers,
-                                    SolutionMap const &solution);
+[[nodiscard]] auto convertSolutionMapToSolutionMapLLVM(
+    const Registers &registers,
+    const SolutionMap &solution) -> std::optional<SolutionMapLLVM>;
 } // namespace alihan

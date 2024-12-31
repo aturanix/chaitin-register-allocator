@@ -11,9 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RegAllocChaitinGraph.h"
 #include "RegAllocChaitinRegisters.h"
 #include "RegAllocChaitinSolvers.h"
+#include "RegAllocChaitinGraph.h"
 
 #include "AllocationOrder.h"
 #include "RegAllocBase.h"
@@ -122,7 +122,7 @@ public:
 
 private:
   unsigned assignRemainingIntervals(
-      std::function<alihan::SolutionMap(const alihan::InterferenceGraph &)>
+      std::function<alihan::SolutionMap(const alihan::InterferenceGraph &, std::size_t)>
           solver);
 };
 
@@ -286,7 +286,7 @@ MCRegister RAChaitin::selectOrSplit(const LiveInterval &VirtReg,
 }
 
 unsigned RAChaitin::assignRemainingIntervals(
-    std::function<alihan::SolutionMap(const alihan::InterferenceGraph &)>
+    std::function<alihan::SolutionMap(const alihan::InterferenceGraph &, std::size_t)>
         Solver) {
   std::vector<const LiveInterval *> Intervals;
   for (unsigned I{0u}, E = MRI->getNumVirtRegs(); I != E; ++I) {
@@ -334,20 +334,23 @@ unsigned RAChaitin::assignRemainingIntervals(
   }
 
   alihan::InterferenceGraph Graph = RegsData.createInterferenceGraph();
-  alihan::SolutionMap Solution = Solver(Graph);
-  alihan::SolutionMapLLVM SolutionLLVM =
+  alihan::SolutionMap Solution = Solver(Graph, RegsData.getGroupCount());
+  std::optional<alihan::SolutionMapLLVM> SolutionLLVM =
       alihan::convertSolutionMapToSolutionMapLLVM(RegsData, Solution);
 
-  unsigned AssignedIntervalsCount{0u};
-  for (auto I = SolutionLLVM.beginAssignments(),
-            E = SolutionLLVM.endAssignments();
-       I != E; ++I) {
-    ++AssignedIntervalsCount;
-    Matrix->assign(LIS->getInterval(I->first), I->second);
+  if (!SolutionLLVM) {
+    LLVM_DEBUG(dbgs() << "Couldn't generate a solution\n");
+    return 0;
+  }
+
+  LLVM_DEBUG(dbgs() << "Generated solution has " << SolutionLLVM->size() << " assignments\n");
+
+  for (auto [VirtId, PhysId] : *SolutionLLVM) {
+    Matrix->assign(LIS->getInterval(VirtId), PhysId);
   }
 
   Matrix->invalidateVirtRegs();
-  return AssignedIntervalsCount;
+  return SolutionLLVM->size();
 }
 
 bool RAChaitin::runOnMachineFunction(MachineFunction &mf) {

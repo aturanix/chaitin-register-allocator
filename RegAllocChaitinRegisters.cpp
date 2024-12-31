@@ -1,6 +1,7 @@
 #include "RegAllocChaitinRegisters.h"
 #include "RegAllocChaitinGraph.h"
 
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <unordered_map>
@@ -8,55 +9,8 @@
 #include <vector>
 
 namespace alihan {
-void SolutionMapLLVM::assign(unsigned int virt, unsigned int phys) {
-  mAssingments.insert({virt, phys});
-}
-
-void SolutionMapLLVM::spill(unsigned int virt) { mSpills.push_back(virt); }
-
-SolutionMapLLVM::assign_iterator_const
-SolutionMapLLVM::beginAssignments() const {
-  return mAssingments.cbegin();
-}
-
-SolutionMapLLVM::assign_iterator_const SolutionMapLLVM::endAssignments() const {
-  return mAssingments.cend();
-}
-
-SolutionMapLLVM::spill_iterator_const SolutionMapLLVM::beginSpills() const {
-  return mSpills.cbegin();
-}
-
-SolutionMapLLVM::spill_iterator_const SolutionMapLLVM::endSpills() const {
-  return mSpills.cend();
-}
-
-std::ostream &SolutionMapLLVM::print(std::ostream &os) const {
-  os << "ASSIGN: {";
-  bool firstAssignment{true};
-  for (auto [k, v] : mAssingments) {
-    if (!firstAssignment) {
-      os << ", ";
-    }
-    os << k << ": " << v;
-    firstAssignment = false;
-  }
-  os << "}\n";
-
-  os << "SPILLS: {";
-  bool firstSpill{true};
-  for (unsigned spill : mSpills) {
-    if (!firstSpill) {
-      os << ", ";
-    }
-    os << spill;
-    firstSpill = false;
-  }
-  return os << '}';
-}
-
-void Registers::addVirt(unsigned int id,
-                        std::unordered_set<unsigned int> candidatePhysIds,
+void Registers::addVirt(unsigned id,
+                        std::unordered_set<unsigned> candidatePhysIds,
                         double weight, bool spillable) {
   VirtualRegister reg;
   reg.weight = weight;
@@ -67,64 +21,58 @@ void Registers::addVirt(unsigned int id,
   mVirtOrdinalToVirt.push_back(id);
 }
 
-unsigned Registers::virtCount() const { return mVirtRegs.size(); }
+auto Registers::getVirtCount() const -> unsigned { return mVirtRegs.size(); }
 
-const Registers::VirtualRegister *
-Registers::getVirtReg(unsigned int virtId) const {
+auto Registers::getVirtReg(unsigned virtId) const -> const VirtualRegister * {
   auto it = mVirtRegs.find(virtId);
   return (it == mVirtRegs.cend()) ? nullptr : &it->second;
 }
 
-std::optional<unsigned int>
-Registers::getVirtOrdinalId(unsigned int virtId) const {
+auto Registers::getVirtOrdinalId(unsigned virtId) const
+    -> std::optional<unsigned> {
   auto it = mVirtToVirtOrdinal.find(virtId);
-  return (it == mVirtToVirtOrdinal.cend())
-             ? std::nullopt
-             : std::make_optional(it->second + mGroups.size());
+  if (it == mVirtToVirtOrdinal.cend()) {
+    return {};
+  }
+  return it->second + mGroups.size();
 }
 
-std::optional<unsigned int>
-Registers::getVirtId(unsigned int virtOrdinalId) const {
-  unsigned i = virtOrdinalId - mGroups.size();
-  return (i < mVirtOrdinalToVirt.size())
-             ? std::make_optional(mVirtOrdinalToVirt[i])
-             : std::nullopt;
+auto Registers::getVirtId(unsigned virtOrdinalId) const
+    -> std::optional<unsigned> {
+  unsigned i{virtOrdinalId - getVirtOrdinalIdFirst()};
+  if (i >= mVirtOrdinalToVirt.size()) {
+    return {};
+  }
+  return mVirtOrdinalToVirt[i];
 }
 
-unsigned int Registers::getGroupBeginId() const { return 0; }
+auto Registers::getGroupIdFirst() const -> unsigned { return 0; }
 
-unsigned int Registers::getGroupEndId() const {
-  return getGroupBeginId() + getGroupCount();
+auto Registers::getGroupIdLast() const -> unsigned { return getGroupCount(); }
+
+auto Registers::getVirtOrdinalIdFirst() const -> unsigned {
+  return getGroupIdLast();
 }
 
-unsigned int Registers::getVirtOrdinalBeginId() const {
-  return getGroupEndId();
+auto Registers::getVirtOrdinalIdLast() const -> unsigned {
+  return getVirtOrdinalIdFirst() + getVirtCount();
 }
 
-unsigned int Registers::getVirtOrdinalEndId() const {
-  return getVirtOrdinalBeginId() + virtCount();
-}
-
-bool Registers::addVirtInterference(unsigned int virtId1,
-                                    unsigned int virtId2) {
+auto Registers::addVirtInterference(unsigned virtId1,
+                                    unsigned virtId2) -> bool {
   auto itEnd = mVirtRegs.end();
-  auto it1 = mVirtRegs.find(virtId1);
-  if (it1 == itEnd) {
-    return false;
+  if (auto it1 = mVirtRegs.find(virtId1); it1 != itEnd) {
+    if (auto it2 = mVirtRegs.find(virtId2); it2 != itEnd) {
+      it1->second.interferences.insert(virtId2);
+      it2->second.interferences.insert(virtId1);
+      return true;
+    }
   }
-
-  auto it2 = mVirtRegs.find(virtId2);
-  if (it2 == itEnd) {
-    return false;
-  }
-
-  it1->second.interferences.insert(virtId2);
-  it2->second.interferences.insert(virtId1);
-  return true;
+  return false;
 }
 
-unsigned int Registers::addPhys(unsigned int id,
-                                const std::vector<unsigned int> &subregIds) {
+auto Registers::addPhys(unsigned id,
+                        const std::vector<unsigned> &subregIds) -> unsigned {
   auto endIt = mPhysToGroupidx.end();
   auto it = mPhysToGroupidx.find(id);
   if (it != endIt) {
@@ -156,82 +104,81 @@ unsigned int Registers::addPhys(unsigned int id,
   return groupId;
 }
 
-unsigned int Registers::getGroupCount() const { return mGroups.size(); }
+auto Registers::getGroupCount() const -> unsigned { return mGroups.size(); }
 
-std::optional<unsigned int>
-Registers::getPhysGroupId(unsigned int physId) const {
+auto Registers::getPhysGroupId(unsigned physId) const
+    -> std::optional<unsigned> {
   auto it = mPhysToGroupidx.find(physId);
-  return (it == mPhysToGroupidx.cend()) ? std::nullopt
-                                        : std::make_optional(it->second);
+  if (it == mPhysToGroupidx.cend()) {
+    return {};
+  }
+  return it->second;
 }
 
-std::optional<unsigned int>
-Registers::getVirtCandPhysInGroup(unsigned int virtId,
-                                  unsigned int groupId) const {
+auto Registers::getVirtCandPhysInGroup(unsigned virtId, unsigned groupId) const
+    -> std::optional<unsigned> {
   VirtualRegister const *virtReg = getVirtReg(virtId);
   if (!virtReg) {
-    return std::nullopt;
+    return {};
   }
 
   for (unsigned phys_id : virtReg->candidatePhysRegs) {
     if (getPhysGroupId(phys_id) == groupId) {
-      return std::make_optional(phys_id);
+      return phys_id;
     }
   }
-  return std::nullopt;
+  return {};
 }
 
-InterferenceGraph Registers::createInterferenceGraph() const {
-  unsigned groupCount = mGroups.size();
-  unsigned virtCount = mVirtRegs.size();
-  InterferenceGraph graph(groupCount, virtCount);
-
-  for (unsigned i = getGroupBeginId(), e = getGroupEndId(); i != e; ++i) {
-    graph.addNode(i);
-  }
-
-  for (unsigned i = getVirtOrdinalBeginId(), e = getVirtOrdinalEndId(); i != e;
-       ++i) {
-    graph.addNode(i);
-  }
-
-  for (unsigned virt = getVirtOrdinalBeginId(), e = getVirtOrdinalEndId();
-       virt != e; ++virt) {
-    Registers::VirtualRegister const *virtReg =
-        getVirtReg(getVirtId(virt).value());
-    graph.setSpillable(virt, virtReg->spillable);
-    graph.setWeight(virt, virtReg->weight);
-    for (unsigned interference : virtReg->interferences) {
-      graph.addEdge(virt, getVirtOrdinalId(interference).value());
+auto Registers::createInterferenceGraph() const -> InterferenceGraph {
+  InterferenceGraph graph;
+  for (unsigned group{getGroupIdFirst()}, e{getGroupIdLast()}; group != e;
+       ++group) {
+    graph.addNode(group, std::numeric_limits<double>::infinity(), false);
+    for (unsigned j{0}; j != group; ++j) {
+      graph.addEdge(group, j);
     }
+  }
+
+  for (unsigned virt{getVirtOrdinalIdFirst()}, e{getVirtOrdinalIdLast()};
+       virt != e; ++virt) {
+    const VirtualRegister *virtReg = getVirtReg(getVirtId(virt).value());
+    graph.addNode(virt, virtReg->weight, virtReg->spillable);
 
     std::unordered_set<unsigned> candidateGroups;
     for (unsigned candPhysId : virtReg->candidatePhysRegs) {
       candidateGroups.insert(getPhysGroupId(candPhysId).value());
     }
 
-    for (unsigned group = getGroupBeginId(), e = getGroupEndId(); group != e;
+    for (unsigned group{getGroupIdFirst()}, e{getGroupIdLast()}; group != e;
          ++group) {
-      if (candidateGroups.find(group) == candidateGroups.end()) {
+      if (!candidateGroups.count(group)) {
         graph.addEdge(virt, group);
       }
     }
   }
 
+  for (unsigned virt{getVirtOrdinalIdFirst()}, e{getVirtOrdinalIdLast()};
+       virt != e; ++virt) {
+    const VirtualRegister *virtReg = getVirtReg(getVirtId(virt).value());
+    for (unsigned interference : virtReg->interferences) {
+      graph.addEdge(virt, getVirtOrdinalId(interference).value());
+    }
+  }
   return graph;
 }
 
-std::ostream &Registers::print(std::ostream &os) const {
+auto Registers::print(std::ostream &os) const -> std::ostream & {
   printVirt(os) << '\n';
   return printPhys(os);
 }
 
-Registers::VirtualRegister *Registers::getVirtReg(unsigned int virtId) {
+auto Registers::getVirtReg(unsigned int virtId) -> VirtualRegister * {
   auto it = mVirtRegs.find(virtId);
   return (it == mVirtRegs.end()) ? nullptr : &it->second;
 }
 
-std::ostream &Registers::printVirtOrdinal(std::ostream &os) const {
+auto Registers::printVirtOrdinal(std::ostream &os) const -> std::ostream & {
   os << "ORTOVI: {";
   bool first_ordinal{true};
   for (unsigned i{0}; i != mVirtOrdinalToVirt.size(); ++i) {
@@ -245,7 +192,7 @@ std::ostream &Registers::printVirtOrdinal(std::ostream &os) const {
   return os << '}';
 }
 
-std::ostream &Registers::printVirt(std::ostream &os) const {
+auto Registers::printVirt(std::ostream &os) const -> std::ostream & {
   bool firstVirt{true};
   os << '{';
   for (auto [virtId, virtReg] : mVirtRegs) {
@@ -278,7 +225,7 @@ std::ostream &Registers::printVirt(std::ostream &os) const {
   return printVirtOrdinal(os);
 }
 
-std::ostream &Registers::printPhys(std::ostream &os) const {
+auto Registers::printPhys(std::ostream &os) const -> std::ostream & {
   os << "PHGRPS [";
   bool firstGroup{true};
   for (auto const &group : mGroups) {
@@ -301,22 +248,45 @@ std::ostream &Registers::printPhys(std::ostream &os) const {
   return os;
 }
 
-SolutionMapLLVM
-convertSolutionMapToSolutionMapLLVM(const Registers &registers,
-                                    const SolutionMap &solution) {
-  SolutionMapLLVM solutionLLVM;
-  std::vector<unsigned> spills;
-  for (unsigned i = registers.getVirtOrdinalBeginId(),
-                end = registers.getVirtOrdinalEndId();
-       i != end; ++i) {
-    unsigned virtId = registers.getVirtId(i).value();
-    auto it = solution.find(i);
+auto convertSolutionMapToSolutionMapLLVM(const Registers &registers,
+                                         const SolutionMap &solution)
+    -> std::optional<SolutionMapLLVM> {
+  std::size_t numberOfColors{0};
+  std::unordered_map<std::size_t, unsigned> colorToGroupMapping;
+  for (unsigned group{registers.getGroupIdFirst()},
+       e{registers.getGroupIdLast()};
+       group != e; ++group) {
+    auto it = solution.find(group);
     if (it == solution.end()) {
-      solutionLLVM.spill(virtId);
-    } else {
-      unsigned physId =
-          registers.getVirtCandPhysInGroup(virtId, it->second).value();
-      solutionLLVM.assign(virtId, physId);
+      return {};
+    }
+
+    std::size_t color{it->second};
+    if (colorToGroupMapping.count(color)) {
+      return {};
+    }
+
+    colorToGroupMapping.insert({it->second, group});
+    ++numberOfColors;
+  }
+
+  if (numberOfColors > registers.getGroupCount()) {
+    return {};
+  }
+
+  SolutionMapLLVM solutionLLVM;
+  unsigned virtOrdinalIdFirst{registers.getVirtOrdinalIdFirst()};
+  unsigned virtOrdinalIdLast{registers.getVirtOrdinalIdLast()};
+  for (auto [reg, color] : solution) {
+    if (virtOrdinalIdFirst <= reg && reg < virtOrdinalIdLast) {
+      if (std::optional<unsigned> virtId = registers.getVirtId(reg)) {
+        if (std::optional<unsigned> physId = registers.getVirtCandPhysInGroup(
+                *virtId, colorToGroupMapping[color])) {
+          solutionLLVM.insert({*virtId, *physId});
+          continue;
+        }
+      }
+      return {};
     }
   }
   return solutionLLVM;
